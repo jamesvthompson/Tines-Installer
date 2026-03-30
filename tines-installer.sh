@@ -9,12 +9,13 @@ GUIDED=false
 NON_INTERACTIVE=false
 INIT_CONFIG=false
 SKIP_DOCKER_INSTALL=false
-FORCE=false
 
 CONFIG_FILE=""
 BUNDLE_PATH=""
 SAVE_CONFIG_PATH=""
 INSTALL_DIR="/opt/tines"
+COMPOSE_CMD=()
+INSTALL_MARKER_FILE=".tines-installer-managed"
 
 # Simplified config defaults
 TENANT_NAME=""
@@ -63,7 +64,6 @@ Options:
   --bundle <path>             Path to official Tines bundle (.zip, .tar.gz, or dir)
   --skip-docker-install       Skip Docker install attempt if missing
   --save-config <path>        Save current config values to file
-  --force                     Overwrite existing release directory if needed
   --help                      Show this help
 USAGE
 }
@@ -72,6 +72,7 @@ init_sample_config() {
   local target="${1:-tines.conf.example}"
   cat > "$target" <<'CONF'
 INSTALL_DIR="/opt/tines"
+BUNDLE_PATH="/path/to/tines-bundle.tar.gz"
 
 TENANT_NAME="my-tines"
 DOMAIN="tines.local"
@@ -116,7 +117,6 @@ parse_args() {
       --bundle) BUNDLE_PATH="${2:-}"; shift ;;
       --skip-docker-install) SKIP_DOCKER_INSTALL=true ;;
       --save-config) SAVE_CONFIG_PATH="${2:-}"; shift ;;
-      --force) FORCE=true ;;
       --help) print_help; exit 0 ;;
       *) die "Unknown option: $1" ;;
     esac
@@ -164,9 +164,36 @@ menu_prompt() {
 load_config() {
   local file="$1"
   [[ -f "$file" ]] || die "Config file not found: $file"
-  # shellcheck disable=SC1090
-  source "$file"
+  local line line_num key raw_value value
+  line_num=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_num=$((line_num + 1))
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*\"(.*)\"[[:space:]]*$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      raw_value="${BASH_REMATCH[2]}"
+      value="${raw_value//\\\"/\"}"
+      value="${value//\\\\/\\}"
+      printf -v "$key" '%s' "$value"
+    else
+      die "Invalid config line $line_num in $file. Expected KEY=\"VALUE\" format."
+    fi
+  done < "$file"
   log_pass "Loaded config: $file"
+}
+
+detect_compose_command() {
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD=(docker compose)
+    return 0
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD=(docker-compose)
+    return 0
+  fi
+  COMPOSE_CMD=()
+  return 1
 }
 
 prompt_default() {
@@ -215,6 +242,7 @@ save_config() {
   local target="$1"
   cat > "$target" <<CONF
 INSTALL_DIR="$INSTALL_DIR"
+BUNDLE_PATH="$BUNDLE_PATH"
 
 TENANT_NAME="$TENANT_NAME"
 DOMAIN="$DOMAIN"
@@ -305,10 +333,10 @@ validate_resources() {
 
 validate_network() {
   log_info "Checking network requirements"
-  if curl -fsSL --max-time 8 https://www.google.com >/dev/null 2>&1; then
+  if curl -fsSL --max-time 8 https://1.1.1.1 >/dev/null 2>&1 || curl -fsSL --max-time 8 https://www.tines.com >/dev/null 2>&1; then
     log_pass "Internet access is available"
   else
-    log_fail "Internet access check failed"
+    log_warn "Internet connectivity could not be confirmed"
   fi
 
   if nc -z localhost 443 >/dev/null 2>&1; then
@@ -347,10 +375,10 @@ validate_dependencies() {
       log_fail "Docker daemon is not running"
     fi
 
-    if docker compose version >/dev/null 2>&1; then
-      log_pass "Docker Compose plugin available"
+    if detect_compose_command; then
+      log_pass "Docker Compose command available: ${COMPOSE_CMD[*]}"
     else
-      log_fail "Docker Compose plugin not available"
+      log_fail "Neither 'docker compose' nor 'docker-compose' is available"
     fi
   fi
 }
@@ -359,13 +387,31 @@ validate_config() {
   log_info "Validating configuration"
 
   [[ -n "$TENANT_NAME" ]] || log_fail "TENANT_NAME is required"
-  [[ -n "$DOMAIN" ]] || log_fail "DOMAIN is required"
+  if [[ -z "$DOMAIN" ]]; then
+    log_fail "DOMAIN is required"
+  elif [[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]]; then
+    log_pass "Domain format looks valid"
+  else
+    log_fail "DOMAIN must be a valid hostname/domain (for example, tines.example.com)"
+  fi
   [[ -n "$BUNDLE_PATH" ]] || log_fail "Bundle path is required (--bundle or BUNDLE_PATH in config)"
 
-  if [[ -z "$DATABASE_PASSWORD" || ${#DATABASE_PASSWORD} -lt 12 ]]; then
-    log_fail "DATABASE_PASSWORD is required and must be at least 12 characters"
+  if [[ -z "$DATABASE_PASSWORD" || ! "$DATABASE_PASSWORD" =~ ^[A-Za-z0-9_-]{12,}$ ]]; then
+    log_fail "DATABASE_PASSWORD must be at least 12 chars and use only letters, numbers, underscore, or dash"
   else
     log_pass "Database password format looks valid"
+  fi
+
+  if [[ "$AUTO_START" == "true" || "$AUTO_START" == "false" ]]; then
+    log_pass "AUTO_START is valid"
+  else
+    log_fail "AUTO_START must be true or false"
+  fi
+
+  if [[ "$USE_SYSTEMD" == "true" || "$USE_SYSTEMD" == "false" ]]; then
+    log_pass "USE_SYSTEMD is valid"
+  else
+    log_fail "USE_SYSTEMD must be true or false"
   fi
 
   if [[ -z "$SMTP_SERVER" || -z "$SMTP_USERNAME" || -z "$SMTP_PASSWORD" ]]; then
@@ -514,14 +560,28 @@ ensure_dependencies_installed() {
     apt-get install -y docker.io docker-compose-plugin
     systemctl enable --now docker
   fi
+
+  if ! detect_compose_command; then
+    die "Neither 'docker compose' nor 'docker-compose' is available"
+  fi
+}
+
+escape_sed_replacement() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//|/\\|}"
+  value="${value//&/\\&}"
+  printf '%s' "$value"
 }
 
 upsert_env() {
   local env_file="$1"
   local key="$2"
   local value="$3"
+  local escaped_value
+  escaped_value="$(escape_sed_replacement "$value")"
   if grep -qE "^${key}=" "$env_file"; then
-    sed -i "s|^${key}=.*|${key}=${value}|" "$env_file"
+    sed -i "s|^${key}=.*|${key}=${escaped_value}|" "$env_file"
   else
     printf '%s=%s\n' "$key" "$value" >> "$env_file"
   fi
@@ -570,8 +630,24 @@ setup_tls() {
   esac
 }
 
+stage_tls_into_release() {
+  local release_dir="$1"
+  local cert_dir="$2"
+
+  if [[ -f "$cert_dir/tines.crt" && -f "$cert_dir/tines.key" ]]; then
+    ln -sfn "$cert_dir/tines.crt" "$release_dir/tines.crt"
+    ln -sfn "$cert_dir/tines.key" "$release_dir/tines.key"
+    log_pass "Staged TLS certs into active release"
+  elif [[ "$TLS_MODE" != "none" ]]; then
+    log_fail "TLS cert files are missing from shared cert directory"
+  fi
+}
+
 install_systemd_unit() {
   local unit_path="/etc/systemd/system/tines.service"
+  local compose_start compose_stop
+  compose_start="$(printf '%q ' "${COMPOSE_CMD[@]}")"
+  compose_stop="$(printf '%q ' "${COMPOSE_CMD[@]}")"
   cat > "$unit_path" <<UNIT
 [Unit]
 Description=Tines Self Hosted
@@ -581,8 +657,8 @@ After=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=$INSTALL_DIR/current
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
+ExecStart=${compose_start}up -d
+ExecStop=${compose_stop}down
 
 [Install]
 WantedBy=multi-user.target
@@ -644,6 +720,11 @@ main() {
   ensure_dependencies_installed
 
   mkdir -p "$INSTALL_DIR/releases" "$INSTALL_DIR/shared/certs" "$INSTALL_DIR/shared/backups"
+  local existing_install=false
+  if [[ -L "$INSTALL_DIR/current" ]] && [[ -f "$INSTALL_DIR/shared/.env" || -f "$INSTALL_DIR/$INSTALL_MARKER_FILE" ]]; then
+    existing_install=true
+  fi
+
   local extracted bundle_dir release_dir
   extracted=$(resolve_bundle "$BUNDLE_PATH")
   bundle_dir=$(bundle_root_dir "$extracted")
@@ -664,10 +745,11 @@ main() {
 
   map_config_to_env "$INSTALL_DIR/shared/.env"
   setup_tls "$INSTALL_DIR/shared/certs"
+  stage_tls_into_release "$INSTALL_DIR/current" "$INSTALL_DIR/shared/certs"
 
   cp "$INSTALL_DIR/shared/.env" "$INSTALL_DIR/current/.env"
 
-  if [[ -L "$INSTALL_DIR/current" && -f "$INSTALL_DIR/current/upgrade.sh" && -d "$INSTALL_DIR/releases" && $(find "$INSTALL_DIR/releases" -mindepth 1 -maxdepth 1 -type d | wc -l) -gt 1 ]]; then
+  if $existing_install && [[ -f "$INSTALL_DIR/current/upgrade.sh" ]]; then
     log_info "Existing installation detected; running official upgrade.sh"
     (cd "$INSTALL_DIR/current" && bash ./upgrade.sh)
   else
@@ -680,9 +762,11 @@ main() {
   fi
 
   if [[ "$AUTO_START" == "true" ]]; then
-    (cd "$INSTALL_DIR/current" && docker compose up -d)
+    (cd "$INSTALL_DIR/current" && "${COMPOSE_CMD[@]}" up -d)
     log_pass "Tines services started"
   fi
+
+  touch "$INSTALL_DIR/$INSTALL_MARKER_FILE"
 
   cat <<NEXT
 [PASS] Installation flow complete.

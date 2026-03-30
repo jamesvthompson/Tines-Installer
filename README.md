@@ -29,11 +29,11 @@ Before installation, ensure the host/environment meets the expected Tines self-h
 
 1. **Linux host** (this installer validates for Ubuntu 24.04).
 2. **Docker Engine** installed and daemon running.
-3. **Docker Compose command** available (`docker compose` preferred, `docker-compose` fallback).
+3. **Docker Compose command** available (`docker compose` or `docker-compose`).
 4. **Internet access** from the host.
 5. **Port 443** available/reachable for HTTPS.
 6. **SMTP server** details available (recommended for production).
-7. **TLS certificate files** available as `tines.crt` and `tines.key` (or let installer generate self-signed certs).
+7. **TLS certificate files** supported: installer keeps certs in shared storage and stages `tines.crt`/`tines.key` into the active install directory before `setup.sh`/`upgrade.sh` (or generates self-signed certs).
 8. **Official Tines installation bundle** available and containing:
    - `setup.sh`
    - `upgrade.sh`
@@ -190,7 +190,7 @@ Checks include:
   - Generates `tines.crt` and `tines.key` in shared cert directory.
 - `TLS_MODE="provided"`:
   - Copies existing cert/key from configured file paths.
-  - Stages `tines.crt` and `tines.key` into the active release directory before running official scripts.
+  - Stages `tines.crt` and `tines.key` into the active release directory before running `setup.sh` or `upgrade.sh`.
 - `TLS_MODE="none"`:
   - Skips TLS provisioning (not recommended for production).
 

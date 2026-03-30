@@ -413,9 +413,9 @@ escape_sed_replacement() {
 
 set_env_key() {
   local env_file="$1" key="$2" value="$3" escaped
-  if grep -q "^${key}=" "$env_file"; then
+  if grep -Eq "^${key}=(\".*\"|.*)$" "$env_file"; then
     escaped=$(escape_sed_replacement "$value")
-    sed -i "s/^${key}=.*/${key}=\"${escaped}\"/" "$env_file"
+    sed -i -E "s|^${key}=(\".*\"|.*)$|${key}=\"${escaped}\"|" "$env_file"
   else
     warn "Skipping env key not found in template: $key"
   fi
@@ -489,6 +489,22 @@ save_config_if_requested() {
   log "Saved config to $SAVE_CONFIG_PATH"
 }
 
+validate_non_interactive_requirements() {
+  local missing=()
+  local key
+  for key in INSTALL_DIR BUNDLE_PATH TENANT_NAME DOMAIN DATABASE_PASSWORD TLS_MODE; do
+    [[ -n "${CFG[$key]:-}" ]] || missing+=("$key")
+  done
+  if [[ "${CFG[TLS_MODE]:-}" == "provided" ]]; then
+    [[ -n "${CFG[TLS_CERT_PATH]:-}" ]] || missing+=("TLS_CERT_PATH")
+    [[ -n "${CFG[TLS_KEY_PATH]:-}" ]] || missing+=("TLS_KEY_PATH")
+  fi
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    fail "--non-interactive requires values for: ${missing[*]}"
+    exit 1
+  fi
+}
+
 main() {
   parse_args "$@"
 
@@ -512,14 +528,12 @@ main() {
     run_guided_setup
   fi
 
-  if [[ "$NON_INTERACTIVE" == true && -z "${CFG[BUNDLE_PATH]:-}" ]]; then
-    fail "--non-interactive requires config with required values (BUNDLE_PATH missing)"
-    exit 1
-  fi
-
   CFG[INSTALL_DIR]="${CFG[INSTALL_DIR]:-$INSTALL_DIR}"
   CFG[BUNDLE_PATH]="${CFG[BUNDLE_PATH]:-$BUNDLE_PATH}"
   CFG[TLS_MODE]="${CFG[TLS_MODE]:-self-signed}"
+  if [[ "$NON_INTERACTIVE" == true ]]; then
+    validate_non_interactive_requirements
+  fi
 
   check_os
   check_resources
@@ -565,6 +579,9 @@ main() {
 
   echo
   echo "Install bootstrap complete. Next steps:"
+  if [[ -n "$COMPOSE_CMD" ]]; then
+    echo "- Detected compose command: $COMPOSE_CMD"
+  fi
   echo "- Validate services with your standard Docker Compose checks"
   echo "- Keep $install_dir/.env and TLS materials secure"
   echo "- Follow official Tines docs and upgrade.sh for future upgrades"

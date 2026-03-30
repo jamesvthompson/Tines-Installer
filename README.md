@@ -33,7 +33,7 @@ This project **does not replace** the official Tines install process. It is a th
 5. Stages the official bundle into one install directory.
 6. Copies `.env.tmpl` to `.env` and maps conservative known config keys.
 7. Generates or copies `tines.crt` and `tines.key`.
-8. Detects either `docker compose` or `docker-compose` when available.
+8. Detects `docker compose` (preferred) and falls back to `docker-compose` when available.
 9. Runs `bash setup.sh` from the install directory.
 
 ## Prerequisites
@@ -42,6 +42,8 @@ This project **does not replace** the official Tines install process. It is a th
 - Root/sudo access for package installation and writing install directory.
 - Official Tines self-hosted bundle (`.zip`, `.tar.gz`, `.tgz`, or extracted directory).
 - Network access recommended for package install and external checks.
+- The bootstrap installs missing `curl`, `unzip`, `openssl`, `netcat`, `docker` (unless `--skip-docker-install`), and the Docker Compose plugin (`docker-compose-plugin`) when compose is missing.
+- If Docker or Compose installation fails, follow the official Docker installation guide: https://docs.docker.com/compose/install/linux/
 
 ## Quick start
 
@@ -128,6 +130,10 @@ Supported `BUNDLE_PATH` formats:
 
 Safe config-file format:
 - flat `KEY="VALUE"` lines only
+- only double-quoted values are supported (`KEY="VALUE"`)
+- no single quotes
+- no inline comments after values
+- keys must be uppercase
 - comments allowed (lines beginning with `#`)
 - blank lines allowed
 - strict format (invalid lines fail fast)

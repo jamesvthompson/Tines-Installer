@@ -2,7 +2,7 @@ INSTALL_DIR="/opt/tines"
 BUNDLE_PATH="/path/to/tines-bundle.tar.gz"
 
 TENANT_NAME="my-tines"
-DOMAIN="tines.local"
+DOMAIN="tines.example.com"
 
 SEED_EMAIL="admin@example.com"
 SEED_FIRST_NAME="Admin"

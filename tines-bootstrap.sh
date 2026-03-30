@@ -416,7 +416,7 @@ set_env_key() {
   local env_file="$1" key="$2" value="$3" escaped
   if grep -Eq "^${key}=(\".*\"|.*)$" "$env_file"; then
     escaped=$(escape_sed_replacement "$value")
-    sed -i -E "s#^${key}=(\".*\"|.*)\$#${key}=\"${escaped}\"#" "$env_file"
+    sed -i -E "s|^${key}=(\".*\"|.*)$|${key}=\"${escaped}\"|" "$env_file"
   else
     warn "Skipping env key not found in template: $key"
   fi

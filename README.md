@@ -3,6 +3,55 @@
 A production-oriented Bash installer for deploying **Tines self-hosted** with the **official Docker Compose installation package**.
 
 > This project intentionally treats the official Tines bundle as the source of truth. It does **not** generate custom container architecture or replace Tines `setup.sh` / `upgrade.sh`.
+>
+> This installer is a thin wrapper around the official Tines self-hosted installation package and does not replace the documented installation process.
+
+---
+
+## Before you run this installer
+
+1. **Contact Tines first**
+   - Self-hosted customers should contact their Account Executive or Customer Success Manager before starting.
+   - Tines provides:
+     - access to the installation package
+     - access to required Docker images
+     - guidance and support during setup
+   - See self-hosted overview: https://explained.tines.com/en/articles/12729997-can-i-set-up-a-self-hosted-tenant
+
+2. **Get the official installation package access**
+   - This installer requires the official Tines self-hosted bundle.
+   - Tines Support enables your access, then you retrieve the package URL from `/settings/upgrade` in your Tines cloud tenant.
+   - The package URL is valid for **3 minutes**.
+   - The package is named similar to `tines_<build id>.zip`.
+   - See Docker Compose installation guide: https://www.tines.com/docs/self-hosted/deploying-tines/docker-compose/tines-docker-compose-installation-guide/
+
+3. **Have required configuration details ready**
+   - Before running this installer, have the following ready:
+     - tenant name
+     - domain / FQDN
+     - seed user details
+     - SMTP details
+     - TLS certificate plan
+   - This installer maps these values into `.env` automatically.
+
+4. **Confirm host prerequisites**
+   - Linux host
+   - Docker installed and running
+   - Docker Compose available (`docker compose` or `docker-compose`)
+   - Netcat installed
+   - Internet access available
+   - Port 443 available or reachable
+   - See Tines Before You Begin documentation: https://www.tines.com/docs/self-hosted/before-you-begin/
+
+5. **Understand installation directory expectations**
+   - The Tines installation directory is expected to contain:
+     - `docker-compose.yml`
+     - `.env`
+     - `setup.sh`
+     - `upgrade.sh`
+     - `tines.crt`
+     - `tines.key`
+   - This installer stages these files automatically before running `setup.sh`.
 
 ---
 

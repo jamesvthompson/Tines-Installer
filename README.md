@@ -28,12 +28,13 @@ This project **does not replace** the official Tines install process. It is a th
 
 1. Validates host preflight checks with `PASS / WARN / FAIL` output.
 2. Optionally installs missing prerequisites on Ubuntu 24.04.
-3. Supports config-file setup or guided prompts.
+3. Supports guided mode, config-file mode, and a no-flags interactive menu.
 4. Validates the official Tines bundle format and required files.
 5. Stages the official bundle into one install directory.
 6. Copies `.env.tmpl` to `.env` and maps conservative known config keys.
 7. Generates or copies `tines.crt` and `tines.key`.
-8. Runs `bash setup.sh` from the install directory.
+8. Detects either `docker compose` or `docker-compose` when available.
+9. Runs `bash setup.sh` from the install directory.
 
 ## Prerequisites
 
@@ -98,6 +99,44 @@ Dry-run performs preflight validation only. It does **not** install packages, wr
 ```
 
 If no flags are provided, the script displays a simple menu for config, guided mode, sample config generation, or dry-run.
+
+## Non-interactive usage
+
+```bash
+./tines-bootstrap.sh --config ./tines.conf --non-interactive
+```
+
+In `--non-interactive` mode, the script fails early unless required values are present:
+- `INSTALL_DIR`
+- `BUNDLE_PATH`
+- `TENANT_NAME`
+- `DOMAIN`
+- `DATABASE_PASSWORD`
+- `TLS_MODE`
+
+If `TLS_MODE="provided"`, `TLS_CERT_PATH` and `TLS_KEY_PATH` are also required.
+
+## Bundle formats
+
+Supported `BUNDLE_PATH` formats:
+- extracted directory
+- `.zip`
+- `.tar.gz`
+- `.tgz`
+
+## Config format expectations
+
+Safe config-file format:
+- flat `KEY="VALUE"` lines only
+- comments allowed (lines beginning with `#`)
+- blank lines allowed
+- strict format (invalid lines fail fast)
+
+## TLS modes
+
+- `self-signed` (bootstrap generates `tines.crt` and `tines.key`)
+- `provided` (bootstrap copies `TLS_CERT_PATH` and `TLS_KEY_PATH`)
+- `none` (bootstrap warns and does not stage cert/key)
 
 ## Install directory staging model (supportability)
 

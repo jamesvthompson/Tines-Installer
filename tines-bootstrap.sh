@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
+RUN_USER="${USER:-$(id -un)}"
 DRY_RUN=false
 GUIDED=false
 NON_INTERACTIVE=false
@@ -382,7 +383,7 @@ install_prerequisites() {
       exit 1
     fi
     curl -fsSL https://get.docker.com | sudo sh
-    sudo usermod -aG docker "$USER" || true
+    sudo usermod -aG docker "$RUN_USER" || true
   fi
 }
 
@@ -408,14 +409,14 @@ stage_bundle() {
 }
 
 escape_sed_replacement() {
-  printf '%s' "$1" | sed -e 's/[\/&]/\\&/g' -e 's/"/\\"/g'
+  printf '%s' "$1" | sed -e 's/[\/&#]/\\&/g' -e 's/"/\\"/g'
 }
 
 set_env_key() {
   local env_file="$1" key="$2" value="$3" escaped
-  if grep -q "^${key}=" "$env_file"; then
+  if grep -Eq "^${key}=(\".*\"|.*)$" "$env_file"; then
     escaped=$(escape_sed_replacement "$value")
-    sed -i "s/^${key}=.*/${key}=\"${escaped}\"/" "$env_file"
+    sed -i -E "s#^${key}=(\".*\"|.*)\$#${key}=\"${escaped}\"#" "$env_file"
   else
     warn "Skipping env key not found in template: $key"
   fi
@@ -479,7 +480,7 @@ print_summary() {
 }
 
 save_config_if_requested() {
-  [[ -n "$SAVE_CONFIG_PATH" ]] || return
+  [[ -n "$SAVE_CONFIG_PATH" ]] || return 0
   [[ "$DRY_RUN" == true ]] && { log "Dry-run: skipping config save"; return; }
   {
     for k in INSTALL_DIR BUNDLE_PATH TENANT_NAME DOMAIN SEED_EMAIL SEED_FIRST_NAME SEED_LAST_NAME SEED_PASSWORD SMTP_SERVER SMTP_PORT SMTP_DOMAIN SMTP_USERNAME SMTP_PASSWORD EMAIL_FROM_ADDRESS DATABASE_PASSWORD APP_SECRET_TOKEN TLS_MODE TLS_CERT_PATH TLS_KEY_PATH; do
@@ -487,6 +488,22 @@ save_config_if_requested() {
     done
   } > "$SAVE_CONFIG_PATH"
   log "Saved config to $SAVE_CONFIG_PATH"
+}
+
+validate_non_interactive_requirements() {
+  local missing=()
+  local key
+  for key in INSTALL_DIR BUNDLE_PATH TENANT_NAME DOMAIN DATABASE_PASSWORD TLS_MODE; do
+    [[ -n "${CFG[$key]:-}" ]] || missing+=("$key")
+  done
+  if [[ "${CFG[TLS_MODE]:-}" == "provided" ]]; then
+    [[ -n "${CFG[TLS_CERT_PATH]:-}" ]] || missing+=("TLS_CERT_PATH")
+    [[ -n "${CFG[TLS_KEY_PATH]:-}" ]] || missing+=("TLS_KEY_PATH")
+  fi
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    fail "--non-interactive requires values for: ${missing[*]}"
+    exit 1
+  fi
 }
 
 main() {
@@ -512,14 +529,12 @@ main() {
     run_guided_setup
   fi
 
-  if [[ "$NON_INTERACTIVE" == true && -z "${CFG[BUNDLE_PATH]:-}" ]]; then
-    fail "--non-interactive requires config with required values (BUNDLE_PATH missing)"
-    exit 1
-  fi
-
   CFG[INSTALL_DIR]="${CFG[INSTALL_DIR]:-$INSTALL_DIR}"
   CFG[BUNDLE_PATH]="${CFG[BUNDLE_PATH]:-$BUNDLE_PATH}"
   CFG[TLS_MODE]="${CFG[TLS_MODE]:-self-signed}"
+  if [[ "$NON_INTERACTIVE" == true ]]; then
+    validate_non_interactive_requirements
+  fi
 
   check_os
   check_resources
@@ -544,7 +559,7 @@ main() {
   local install_dir="${CFG[INSTALL_DIR]}"
   log "Creating install directory: $install_dir"
   sudo mkdir -p "$install_dir"
-  sudo chown "$USER":"$USER" "$install_dir"
+  sudo chown "$RUN_USER":"$RUN_USER" "$install_dir"
 
   log "Staging official bundle into install directory"
   stage_bundle "${CFG[BUNDLE_PATH]}" "$install_dir"
@@ -565,6 +580,9 @@ main() {
 
   echo
   echo "Install bootstrap complete. Next steps:"
+  if [[ -n "$COMPOSE_CMD" ]]; then
+    echo "- Detected compose command: $COMPOSE_CMD"
+  fi
   echo "- Validate services with your standard Docker Compose checks"
   echo "- Keep $install_dir/.env and TLS materials secure"
   echo "- Follow official Tines docs and upgrade.sh for future upgrades"

@@ -212,7 +212,7 @@ check_resources() {
   local mem_mb cpu_cores disk_gb
   mem_mb=$(awk '/MemTotal/ { print int($2/1024) }' /proc/meminfo)
   cpu_cores=$(nproc)
-  disk_gb=$(df -BG / | awk 'NR==2 {gsub("G","",$4); print $4}')
+  disk_gb=$(df -P / | awk 'NR==2 {print int($4/1024/1024)}')
 
   if (( mem_mb < 4096 )); then record_fail "RAM < 4GB (${mem_mb}MB)";
   elif (( mem_mb < 8192 )); then record_warn "RAM 4-8GB (${mem_mb}MB)";
@@ -252,7 +252,7 @@ check_tools() {
     fi
   fi
 
-  if docker compose version >/dev/null 2>&1; then
+  if has_cmd docker && docker compose version >/dev/null 2>&1; then
     COMPOSE_CMD="docker compose"
     record_pass "Compose command detected: docker compose"
   elif has_cmd docker-compose; then
@@ -285,10 +285,10 @@ check_network() {
 check_config() {
   local domain_re='^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?))*$'
   [[ -n "${CFG[TENANT_NAME]:-}" ]] && record_pass "TENANT_NAME set" || record_fail "TENANT_NAME is required"
-  if [[ -n "${CFG[DOMAIN]:-}" && "${CFG[DOMAIN]}" =~ $domain_re ]]; then
+  if [[ -n "${CFG[DOMAIN]:-}" && "${CFG[DOMAIN]}" =~ $domain_re && "${CFG[DOMAIN]}" == *.* ]]; then
     record_pass "DOMAIN looks valid"
   else
-    record_fail "DOMAIN is required and must look like a valid hostname/FQDN"
+    record_fail "DOMAIN must be a valid FQDN (e.g. tines.example.com)"
   fi
   [[ -n "${CFG[BUNDLE_PATH]:-}" ]] && record_pass "BUNDLE_PATH set" || record_fail "BUNDLE_PATH is required"
 
@@ -382,7 +382,22 @@ install_prerequisites() {
       exit 1
     fi
     curl -fsSL https://get.docker.com | sudo sh
-    sudo usermod -aG docker "$USER" || true
+    local owner="${SUDO_USER:-$USER}"
+    sudo usermod -aG docker "$owner" || true
+  fi
+
+  if printf '%s\n' "${MISSING_TOOLS[@]}" | grep -qx compose; then
+    sudo apt-get install -y docker-compose-plugin
+    if has_cmd docker && docker compose version >/dev/null 2>&1; then
+      COMPOSE_CMD="docker compose"
+      log "Compose command detected after install: docker compose"
+    elif has_cmd docker-compose; then
+      COMPOSE_CMD="docker-compose"
+      log "Compose command detected after install: docker-compose"
+    else
+      fail "Docker Compose installation failed. 'docker compose version' still not available."
+      exit 1
+    fi
   fi
 }
 
@@ -558,7 +573,8 @@ main() {
   local install_dir="${CFG[INSTALL_DIR]}"
   log "Creating install directory: $install_dir"
   sudo mkdir -p "$install_dir"
-  sudo chown "$USER":"$USER" "$install_dir"
+  local owner="${SUDO_USER:-$USER}"
+  sudo chown "$owner":"$owner" "$install_dir"
 
   log "Staging official bundle into install directory"
   stage_bundle "${CFG[BUNDLE_PATH]}" "$install_dir"

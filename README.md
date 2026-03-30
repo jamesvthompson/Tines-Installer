@@ -29,7 +29,7 @@ Before installation, ensure the host/environment meets the expected Tines self-h
 
 1. **Linux host** (this installer validates for Ubuntu 24.04).
 2. **Docker Engine** installed and daemon running.
-3. **Docker Compose plugin** (`docker compose`) installed.
+3. **Docker Compose command** available (`docker compose` preferred, `docker-compose` fallback).
 4. **Internet access** from the host.
 5. **Port 443** available/reachable for HTTPS.
 6. **SMTP server** details available (recommended for production).
@@ -64,7 +64,7 @@ On your Ubuntu 24.04 host, make sure basic tools are available:
 - `openssl`
 - `netcat` (`nc`)
 - `docker`
-- `docker compose`
+- either `docker compose` or `docker-compose`
 
 The installer validates these requirements and can attempt package installation for missing dependencies (unless `--skip-docker-install` is provided for Docker).
 
@@ -75,6 +75,7 @@ cp tines.conf.example tines.conf
 ```
 
 Edit `tines.conf` with your tenant/domain/SMTP/database/TLS values.
+Set `BUNDLE_PATH` to your official Tines bundle path.
 
 ### 3) Run dry-run first (recommended)
 
@@ -115,7 +116,6 @@ If you prefer interactive setup:
 - `--bundle <path>` — path to official Tines bundle (`.zip`, `.tar.gz`, `.tgz`, or extracted directory).
 - `--skip-docker-install` — do not attempt Docker installation if missing.
 - `--save-config <path>` — persist in-memory config to a file.
-- `--force` — allow overwrite behavior in conflict scenarios.
 - `--help` — print help.
 
 ---
@@ -190,6 +190,7 @@ Checks include:
   - Generates `tines.crt` and `tines.key` in shared cert directory.
 - `TLS_MODE="provided"`:
   - Copies existing cert/key from configured file paths.
+  - Stages `tines.crt` and `tines.key` into the active release directory before running official scripts.
 - `TLS_MODE="none"`:
   - Skips TLS provisioning (not recommended for production).
 
@@ -243,4 +244,3 @@ docker compose down
 - Do not edit official Tines `setup.sh`, `upgrade.sh`, or `docker-compose.yml`.
 - Keep backups of your managed `.env`, certs, and release bundles.
 - Prefer valid CA-issued TLS certs and production SMTP configuration.
-

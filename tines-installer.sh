@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
+VERSION="1.0.0"
+
 DRY_RUN=false
 GUIDED=false
 NON_INTERACTIVE=false
@@ -10,11 +12,11 @@ SKIP_DOCKER_INSTALL=false
 FORCE=false
 
 CONFIG_FILE=""
-SAVE_CONFIG_PATH=""
-
-# Config defaults
-INSTALL_DIR="/opt/tines"
 BUNDLE_PATH=""
+SAVE_CONFIG_PATH=""
+INSTALL_DIR="/opt/tines"
+
+# Simplified config defaults
 TENANT_NAME=""
 DOMAIN=""
 SEED_EMAIL="admin@example.com"
@@ -39,70 +41,13 @@ RESTART_POLICY="unless-stopped"
 
 FAIL_COUNT=0
 WARN_COUNT=0
-COMPOSE_CMD_STR=""
-COMPOSE_BIN=""
-
-readonly CONFIG_KEYS=(
-  INSTALL_DIR BUNDLE_PATH TENANT_NAME DOMAIN
-  SEED_EMAIL SEED_FIRST_NAME SEED_LAST_NAME SEED_PASSWORD
-  SMTP_SERVER SMTP_PORT SMTP_DOMAIN SMTP_USERNAME SMTP_PASSWORD EMAIL_FROM_ADDRESS
-  DATABASE_PASSWORD APP_SECRET_TOKEN TELEMETRY_ID
-  TLS_MODE TLS_CERT_PATH TLS_KEY_PATH
-  AUTO_START USE_SYSTEMD RESTART_POLICY
-)
-
-readonly ENV_MAP=(
-  "TENANT_NAME:TENANT_NAME"
-  "DOMAIN:DOMAIN"
-  "SEED_EMAIL:SEED_EMAIL"
-  "SEED_FIRST_NAME:SEED_FIRST_NAME"
-  "SEED_LAST_NAME:SEED_LAST_NAME"
-  "SEED_PASSWORD:SEED_PASSWORD"
-  "SMTP_SERVER:SMTP_SERVER"
-  "SMTP_PORT:SMTP_PORT"
-  "SMTP_DOMAIN:SMTP_DOMAIN"
-  "SMTP_USERNAME:SMTP_USER_NAME"
-  "SMTP_PASSWORD:SMTP_PASSWORD"
-  "EMAIL_FROM_ADDRESS:EMAIL_FROM_ADDRESS"
-  "DATABASE_PASSWORD:DATABASE_PASSWORD"
-  "APP_SECRET_TOKEN:APP_SECRET_TOKEN"
-  "TELEMETRY_ID:TELEMETRY_ID"
-  "RESTART_POLICY:RESTART_POLICY"
-)
 
 log_info() { printf '[INFO] %s\n' "$*"; }
 log_pass() { printf '[PASS] %s\n' "$*"; }
 log_warn() { printf '[WARN] %s\n' "$*"; WARN_COUNT=$((WARN_COUNT + 1)); }
 log_fail() { printf '[FAIL] %s\n' "$*"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
 
-die() {
-  printf '[FAIL] %s\n' "$*" >&2
-  exit 1
-}
-
-contains_key() {
-  local key="$1"
-  local k
-  for k in "${CONFIG_KEYS[@]}"; do
-    [[ "$k" == "$key" ]] && return 0
-  done
-  return 1
-}
-
-strip_quotes() {
-  local value="$1"
-  if [[ "$value" =~ ^\"(.*)\"$ ]]; then
-    printf '%s' "${BASH_REMATCH[1]}"
-  elif [[ "$value" =~ ^\'(.*)\'$ ]]; then
-    printf '%s' "${BASH_REMATCH[1]}"
-  else
-    printf '%s' "$value"
-  fi
-}
-
-is_boolean() {
-  [[ "$1" == "true" || "$1" == "false" ]]
-}
+die() { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
 
 print_help() {
   cat <<USAGE
@@ -112,22 +57,21 @@ Options:
   --guided                    Run guided interactive setup
   --config <path>             Load configuration file
   --init-config               Generate sample config and exit
-  --dry-run                   Validate only (no writes, installs, setup/upgrade)
+  --dry-run                   Validate only (no writes, installs, or setup.sh)
   --non-interactive           Disable prompts; requires --config
-  --install-dir <path>        Override install directory
-  --bundle <path>             Path to official Tines bundle (dir/.zip/.tar.gz/.tgz)
-  --skip-docker-install       Skip Docker installation attempts if missing
+  --install-dir <path>        Override install directory (default: /opt/tines)
+  --bundle <path>             Path to official Tines bundle (.zip, .tar.gz, or dir)
+  --skip-docker-install       Skip Docker install attempt if missing
   --save-config <path>        Save current config values to file
-  --force                     Overwrite existing staged release directory if needed
+  --force                     Overwrite existing release directory if needed
   --help                      Show this help
 USAGE
 }
 
-write_example_config() {
-  local target="$1"
+init_sample_config() {
+  local target="${1:-tines.conf.example}"
   cat > "$target" <<'CONF'
 INSTALL_DIR="/opt/tines"
-BUNDLE_PATH="/path/to/tines-bundle.zip"
 
 TENANT_NAME="my-tines"
 DOMAIN="tines.local"
@@ -137,11 +81,11 @@ SEED_FIRST_NAME="Admin"
 SEED_LAST_NAME="User"
 SEED_PASSWORD="ChangeMe123!"
 
-SMTP_SERVER="smtp.example.com"
+SMTP_SERVER="smtp.gmail.com"
 SMTP_PORT="587"
-SMTP_DOMAIN="example.com"
-SMTP_USERNAME="smtp-user"
-SMTP_PASSWORD="smtp-password"
+SMTP_DOMAIN="gmail.com"
+SMTP_USERNAME="admin@example.com"
+SMTP_PASSWORD="app-password"
 EMAIL_FROM_ADDRESS="admin@example.com"
 
 DATABASE_PASSWORD="TinesDbPass123"
@@ -184,7 +128,7 @@ parse_args() {
   fi
 }
 
-show_menu() {
+menu_prompt() {
   echo "Welcome to the Tines Self-Hosted Installer"
   echo
   echo "1) Use existing config file"
@@ -195,44 +139,34 @@ show_menu() {
   local choice
   read -r -p "Select an option [1-4]: " choice
   case "$choice" in
-    1) read -r -p "Config path: " CONFIG_FILE ;;
-    2) GUIDED=true ;;
-    3) write_example_config "tines.conf.example"; exit 0 ;;
-    4)
-      DRY_RUN=true
+    1)
       read -r -p "Config path: " CONFIG_FILE
       ;;
-    *) die "Invalid menu option: $choice" ;;
+    2)
+      GUIDED=true
+      ;;
+    3)
+      init_sample_config "tines.conf.example"
+      exit 0
+      ;;
+    4)
+      DRY_RUN=true
+      if [[ -z "$CONFIG_FILE" ]]; then
+        read -r -p "Config path (optional, press Enter to skip): " CONFIG_FILE
+      fi
+      ;;
+    *)
+      die "Invalid menu option: $choice"
+      ;;
   esac
 }
 
-load_config_file() {
-  local cfg="$1"
-  [[ -f "$cfg" ]] || die "Config file not found: $cfg"
-
-  local line key raw value line_no=0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line_no=$((line_no + 1))
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue
-
-    if [[ ! "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-      die "Invalid config syntax at $cfg:$line_no"
-    fi
-
-    key="${line%%=*}"
-    raw="${line#*=}"
-    key="${key//[[:space:]]/}"
-    value="$(strip_quotes "$raw")"
-
-    if contains_key "$key"; then
-      printf -v "$key" '%s' "$value"
-    else
-      log_warn "Ignoring unsupported config key: $key"
-    fi
-  done < "$cfg"
-
-  log_pass "Loaded config: $cfg"
+load_config() {
+  local file="$1"
+  [[ -f "$file" ]] || die "Config file not found: $file"
+  # shellcheck disable=SC1090
+  source "$file"
+  log_pass "Loaded config: $file"
 }
 
 prompt_default() {
@@ -245,7 +179,9 @@ prompt_default() {
   else
     read -r -p "$prompt: " input || true
   fi
-  [[ -n "$input" ]] && printf -v "$var_name" '%s' "$input"
+  if [[ -n "$input" ]]; then
+    printf -v "$var_name" '%s' "$input"
+  fi
 }
 
 guided_setup() {
@@ -259,7 +195,7 @@ guided_setup() {
   prompt_default SEED_LAST_NAME "Seed last name"
   prompt_default SEED_PASSWORD "Seed password"
   prompt_default DATABASE_PASSWORD "Database password"
-  prompt_default SMTP_SERVER "SMTP server"
+  prompt_default SMTP_SERVER "SMTP server (optional)"
   prompt_default SMTP_PORT "SMTP port"
   prompt_default SMTP_DOMAIN "SMTP domain"
   prompt_default SMTP_USERNAME "SMTP username"
@@ -272,13 +208,13 @@ guided_setup() {
   fi
   prompt_default USE_SYSTEMD "Use systemd (true/false)"
   prompt_default AUTO_START "Auto-start services (true/false)"
+  prompt_default RESTART_POLICY "Docker restart policy"
 }
 
 save_config() {
   local target="$1"
   cat > "$target" <<CONF
 INSTALL_DIR="$INSTALL_DIR"
-BUNDLE_PATH="$BUNDLE_PATH"
 
 TENANT_NAME="$TENANT_NAME"
 DOMAIN="$DOMAIN"
@@ -332,41 +268,59 @@ validate_resources() {
   mem_gb=$(awk '/MemTotal/ { printf "%.0f", $2/1024/1024 }' /proc/meminfo)
   cpu_cores=$(nproc)
   if [[ -d "$INSTALL_DIR" ]]; then
-    disk_gb=$(df -BG "$INSTALL_DIR" | awk 'NR==2 {gsub("G","",$4); print $4}')
+    disk_gb=$(df -BG "$INSTALL_DIR" | awk 'NR==2 {gsub("G", "", $4); print $4}')
   else
-    disk_gb=$(df -BG / | awk 'NR==2 {gsub("G","",$4); print $4}')
+    disk_gb=$(df -BG / | awk 'NR==2 {gsub("G", "", $4); print $4}')
   fi
 
-  if (( mem_gb < 4 )); then log_fail "Low memory (${mem_gb} GB). Minimum 4 GB required"
-  elif (( mem_gb < 8 )); then log_warn "Memory ${mem_gb} GB. 8+ GB recommended"
-  else log_pass "Memory check passed (${mem_gb} GB)"; fi
+  if [[ -z "$disk_gb" || ! "$disk_gb" =~ ^[0-9]+$ ]]; then
+    log_fail "Unable to determine available disk space"
+    return
+  fi
 
-  if (( cpu_cores < 2 )); then log_fail "CPU cores ${cpu_cores}. Minimum 2 required"
-  elif (( cpu_cores < 4 )); then log_warn "CPU cores ${cpu_cores}. 4+ recommended"
-  else log_pass "CPU check passed (${cpu_cores} cores)"; fi
+  if (( mem_gb < 4 )); then
+    log_fail "Low memory (${mem_gb} GB). Minimum 4 GB required"
+  elif (( mem_gb < 8 )); then
+    log_warn "Memory is ${mem_gb} GB. 8+ GB recommended"
+  else
+    log_pass "Memory check passed (${mem_gb} GB)"
+  fi
 
-  if (( disk_gb < 20 )); then log_fail "Disk ${disk_gb} GB. Minimum 20 GB required"
-  elif (( disk_gb < 50 )); then log_warn "Disk ${disk_gb} GB. 50+ GB recommended"
-  else log_pass "Disk check passed (${disk_gb} GB free)"; fi
+  if (( cpu_cores < 2 )); then
+    log_fail "Insufficient CPU cores (${cpu_cores}). Minimum 2 required"
+  elif (( cpu_cores < 4 )); then
+    log_warn "CPU cores are ${cpu_cores}. 4+ recommended"
+  else
+    log_pass "CPU check passed (${cpu_cores} cores)"
+  fi
+
+  if (( disk_gb < 20 )); then
+    log_fail "Available disk ${disk_gb} GB. Minimum 20 GB required"
+  elif (( disk_gb < 50 )); then
+    log_warn "Available disk ${disk_gb} GB. 50+ GB recommended"
+  else
+    log_pass "Disk check passed (${disk_gb} GB free)"
+  fi
 }
 
-detect_compose_command() {
-  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    COMPOSE_BIN="docker compose"
-    COMPOSE_CMD_STR="docker compose"
-    return 0
+validate_network() {
+  log_info "Checking network requirements"
+  if curl -fsSL --max-time 8 https://www.google.com >/dev/null 2>&1; then
+    log_pass "Internet access is available"
+  else
+    log_fail "Internet access check failed"
   fi
-  if command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE_BIN="docker-compose"
-    COMPOSE_CMD_STR="docker-compose"
-    return 0
+
+  if nc -z localhost 443 >/dev/null 2>&1; then
+    log_warn "Port 443 appears in use on localhost"
+  else
+    log_pass "Port 443 appears available on localhost"
   fi
-  return 1
 }
 
 validate_dependencies() {
   log_info "Checking required tools"
-  local deps=(curl unzip openssl nc tar)
+  local deps=(curl unzip openssl nc)
   local dep
   for dep in "${deps[@]}"; do
     if command -v "$dep" >/dev/null 2>&1; then
@@ -377,9 +331,13 @@ validate_dependencies() {
   done
 
   if command -v docker >/dev/null 2>&1; then
-    log_pass "docker installed"
+    log_pass "Docker installed"
   else
-    log_fail "docker is missing"
+    if $SKIP_DOCKER_INSTALL; then
+      log_fail "Docker is missing and --skip-docker-install was used"
+    else
+      log_warn "Docker not installed; installer will attempt installation"
+    fi
   fi
 
   if command -v docker >/dev/null 2>&1; then
@@ -388,64 +346,42 @@ validate_dependencies() {
     else
       log_fail "Docker daemon is not running"
     fi
-  fi
 
-  if detect_compose_command; then
-    log_pass "Compose command detected: $COMPOSE_CMD_STR"
-  else
-    log_fail "Neither 'docker compose' nor 'docker-compose' is available"
+    if docker compose version >/dev/null 2>&1; then
+      log_pass "Docker Compose plugin available"
+    else
+      log_fail "Docker Compose plugin not available"
+    fi
   fi
-}
-
-validate_network() {
-  log_info "Checking network prerequisites"
-  if getent hosts registry-1.docker.io >/dev/null 2>&1; then
-    log_pass "DNS resolution to container registry succeeded"
-  else
-    log_warn "Could not resolve registry-1.docker.io (network may be restricted)"
-  fi
-
-  if nc -z localhost 443 >/dev/null 2>&1; then
-    log_warn "Port 443 appears in use on localhost"
-  else
-    log_pass "Port 443 appears available on localhost"
-  fi
-}
-
-validate_domain() {
-  if [[ "$DOMAIN" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]; then
-    log_pass "Domain format looks valid"
-  else
-    log_fail "DOMAIN must be a valid FQDN (example: tines.example.com)"
-  fi
-}
-
-validate_database_password() {
-  if [[ ${#DATABASE_PASSWORD} -lt 12 ]]; then
-    log_fail "DATABASE_PASSWORD must be at least 12 characters"
-    return
-  fi
-  if [[ ! "$DATABASE_PASSWORD" =~ ^[A-Za-z0-9._~!@%+=,:/-]+$ ]]; then
-    log_fail "DATABASE_PASSWORD contains unsupported characters"
-    return
-  fi
-  log_pass "DATABASE_PASSWORD format looks valid"
 }
 
 validate_config() {
   log_info "Validating configuration"
+
   [[ -n "$TENANT_NAME" ]] || log_fail "TENANT_NAME is required"
   [[ -n "$DOMAIN" ]] || log_fail "DOMAIN is required"
-  [[ -n "$BUNDLE_PATH" ]] || log_fail "BUNDLE_PATH is required"
+  [[ -n "$BUNDLE_PATH" ]] || log_fail "Bundle path is required (--bundle or BUNDLE_PATH in config)"
 
-  [[ -n "$DOMAIN" ]] && validate_domain
-  [[ -n "$DATABASE_PASSWORD" ]] && validate_database_password || log_fail "DATABASE_PASSWORD is required"
+  if [[ -z "$DATABASE_PASSWORD" || ${#DATABASE_PASSWORD} -lt 12 ]]; then
+    log_fail "DATABASE_PASSWORD is required and must be at least 12 characters"
+  else
+    log_pass "Database password format looks valid"
+  fi
 
-  is_boolean "$AUTO_START" || log_fail "AUTO_START must be true or false"
-  is_boolean "$USE_SYSTEMD" || log_fail "USE_SYSTEMD must be true or false"
+  if [[ -z "$SMTP_SERVER" || -z "$SMTP_USERNAME" || -z "$SMTP_PASSWORD" ]]; then
+    log_warn "SMTP is not fully configured"
+  else
+    log_pass "SMTP appears configured"
+  fi
+
+  if [[ -z "$APP_SECRET_TOKEN" ]]; then
+    log_warn "APP_SECRET_TOKEN is empty and will be generated"
+  fi
 
   case "$TLS_MODE" in
-    self-signed) log_pass "TLS mode: self-signed" ;;
+    self-signed)
+      log_pass "TLS mode: self-signed"
+      ;;
     provided)
       if [[ -f "$TLS_CERT_PATH" && -f "$TLS_KEY_PATH" ]]; then
         log_pass "Provided TLS files found"
@@ -453,76 +389,207 @@ validate_config() {
         log_fail "TLS_MODE=provided requires valid TLS_CERT_PATH and TLS_KEY_PATH"
       fi
       ;;
-    none) log_warn "TLS disabled (TLS_MODE=none)" ;;
-    *) log_fail "TLS_MODE must be one of: self-signed, provided, none" ;;
+    none)
+      log_warn "TLS disabled (TLS_MODE=none)"
+      ;;
+    *)
+      log_fail "Invalid TLS_MODE: $TLS_MODE (expected self-signed|provided|none)"
+      ;;
   esac
-
-  if [[ -z "$SMTP_SERVER" || -z "$SMTP_USERNAME" || -z "$SMTP_PASSWORD" ]]; then
-    log_warn "SMTP not fully configured"
-  else
-    log_pass "SMTP appears configured"
-  fi
-
-  [[ -z "$APP_SECRET_TOKEN" ]] && log_warn "APP_SECRET_TOKEN is empty and will be generated"
 }
 
-list_archive_files() {
+archive_contains_required_files() {
   local bundle="$1"
-  if [[ "$bundle" == *.zip ]]; then
-    unzip -Z1 "$bundle"
-  else
-    tar -tf "$bundle"
-  fi
-}
-
-validate_bundle_contents_in_list() {
-  local file_list="$1"
   local missing=0
   local required=(setup.sh upgrade.sh .env.tmpl docker-compose.yml)
-  local r
-  for r in "${required[@]}"; do
-    if ! grep -qE "(^|/)$r$" <<<"$file_list"; then
-      log_fail "Missing $r in bundle"
-      missing=1
-    else
-      log_pass "Found $r in bundle"
+  local f
+  for f in "${required[@]}"; do
+    if [[ "$bundle" == *.zip ]]; then
+      if ! unzip -Z1 "$bundle" | grep -qE "(^|/)$f$"; then
+        log_fail "Missing $f in bundle archive"
+        missing=1
+      fi
+    elif [[ "$bundle" == *.tar.gz || "$bundle" == *.tgz ]]; then
+      if ! tar -tf "$bundle" | grep -qE "(^|/)$f$"; then
+        log_fail "Missing $f in bundle archive"
+        missing=1
+      fi
     fi
   done
   return "$missing"
 }
 
 validate_bundle_path() {
-  log_info "Validating bundle path"
-  [[ -n "$BUNDLE_PATH" ]] || { log_fail "BUNDLE_PATH is required"; return; }
+  log_info "Validating bundle path and required files"
+  if [[ -z "$BUNDLE_PATH" ]]; then
+    log_fail "Bundle path is required"
+    return
+  fi
 
   if [[ -d "$BUNDLE_PATH" ]]; then
-    local missing=0
-    local required=(setup.sh upgrade.sh .env.tmpl docker-compose.yml)
-    local r
-    for r in "${required[@]}"; do
-      if find "$BUNDLE_PATH" -maxdepth 2 -type f -name "$r" | grep -q .; then
-        log_pass "Found $r in bundle directory"
-      else
-        log_fail "Missing $r in bundle directory"
-        missing=1
-      fi
-    done
-    return "$missing"
+    local root
+    root=$(bundle_root_dir "$BUNDLE_PATH")
+    validate_bundle_contents "$root"
+    return
   fi
 
   if [[ -f "$BUNDLE_PATH" ]]; then
     case "$BUNDLE_PATH" in
       *.zip|*.tar.gz|*.tgz)
-        local list
-        list="$(list_archive_files "$BUNDLE_PATH")"
-        validate_bundle_contents_in_list "$list" || true
+        archive_contains_required_files "$BUNDLE_PATH" || true
         ;;
-      *) log_fail "Unsupported bundle format: $BUNDLE_PATH" ;;
+      *)
+        log_fail "Unsupported bundle format: $BUNDLE_PATH"
+        ;;
     esac
+  else
+    log_fail "Bundle path not found: $BUNDLE_PATH"
+  fi
+}
+
+resolve_bundle() {
+  local bundle="$1"
+  local release_name release_dir
+  release_name="$(date +%Y%m%d%H%M%S)"
+  release_dir="$INSTALL_DIR/releases/$release_name"
+
+  if [[ -d "$bundle" ]]; then
+    echo "$bundle"
     return
   fi
 
-  log_fail "Bundle path not found: $BUNDLE_PATH"
+  mkdir -p "$release_dir"
+  if [[ "$bundle" == *.zip ]]; then
+    unzip -q "$bundle" -d "$release_dir"
+  elif [[ "$bundle" == *.tar.gz || "$bundle" == *.tgz ]]; then
+    tar -xzf "$bundle" -C "$release_dir"
+  else
+    die "Unsupported bundle format: $bundle"
+  fi
+  echo "$release_dir"
+}
+
+bundle_root_dir() {
+  local extracted="$1"
+  if [[ -f "$extracted/setup.sh" ]]; then
+    echo "$extracted"
+    return
+  fi
+  local found
+  found=$(find "$extracted" -mindepth 1 -maxdepth 2 -type f -name setup.sh | head -n1 || true)
+  if [[ -z "$found" ]]; then
+    echo "$extracted"
+  else
+    dirname "$found"
+  fi
+}
+
+validate_bundle_contents() {
+  local bundle_dir="$1"
+  log_info "Validating official bundle contents"
+  local required=(setup.sh upgrade.sh .env.tmpl docker-compose.yml)
+  local f
+  for f in "${required[@]}"; do
+    if [[ -f "$bundle_dir/$f" ]]; then
+      log_pass "Found $f"
+    else
+      log_fail "Missing $f in bundle"
+    fi
+  done
+}
+
+ensure_dependencies_installed() {
+  log_info "Ensuring required dependencies are installed"
+  local apt_packages=(curl unzip openssl netcat-openbsd)
+  if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 || ! command -v nc >/dev/null 2>&1; then
+    apt-get update -y
+    apt-get install -y "${apt_packages[@]}"
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    if $SKIP_DOCKER_INSTALL; then
+      die "Docker missing and installation skipped"
+    fi
+    apt-get update -y
+    apt-get install -y docker.io docker-compose-plugin
+    systemctl enable --now docker
+  fi
+}
+
+upsert_env() {
+  local env_file="$1"
+  local key="$2"
+  local value="$3"
+  if grep -qE "^${key}=" "$env_file"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$env_file"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$env_file"
+  fi
+}
+
+map_config_to_env() {
+  local env_file="$1"
+  upsert_env "$env_file" TENANT_NAME "$TENANT_NAME"
+  upsert_env "$env_file" DOMAIN "$DOMAIN"
+  upsert_env "$env_file" SEED_EMAIL "$SEED_EMAIL"
+  upsert_env "$env_file" SEED_FIRST_NAME "$SEED_FIRST_NAME"
+  upsert_env "$env_file" SEED_LAST_NAME "$SEED_LAST_NAME"
+  upsert_env "$env_file" SEED_PASSWORD "$SEED_PASSWORD"
+  upsert_env "$env_file" SMTP_SERVER "$SMTP_SERVER"
+  upsert_env "$env_file" SMTP_PORT "$SMTP_PORT"
+  upsert_env "$env_file" SMTP_DOMAIN "$SMTP_DOMAIN"
+  upsert_env "$env_file" SMTP_USER_NAME "$SMTP_USERNAME"
+  upsert_env "$env_file" SMTP_PASSWORD "$SMTP_PASSWORD"
+  upsert_env "$env_file" EMAIL_FROM_ADDRESS "$EMAIL_FROM_ADDRESS"
+  upsert_env "$env_file" DATABASE_PASSWORD "$DATABASE_PASSWORD"
+  upsert_env "$env_file" APP_SECRET_TOKEN "$APP_SECRET_TOKEN"
+  upsert_env "$env_file" TELEMETRY_ID "$TELEMETRY_ID"
+  upsert_env "$env_file" RESTART_POLICY "$RESTART_POLICY"
+}
+
+setup_tls() {
+  local cert_dir="$1"
+  mkdir -p "$cert_dir"
+  case "$TLS_MODE" in
+    self-signed)
+      openssl req -x509 -nodes -days 365 \
+        -newkey rsa:2048 \
+        -keyout "$cert_dir/tines.key" \
+        -out "$cert_dir/tines.crt" \
+        -subj "/CN=$DOMAIN"
+      log_pass "Generated self-signed TLS certs"
+      ;;
+    provided)
+      cp "$TLS_CERT_PATH" "$cert_dir/tines.crt"
+      cp "$TLS_KEY_PATH" "$cert_dir/tines.key"
+      log_pass "Copied provided TLS certs"
+      ;;
+    none)
+      log_warn "Skipping TLS setup"
+      ;;
+  esac
+}
+
+install_systemd_unit() {
+  local unit_path="/etc/systemd/system/tines.service"
+  cat > "$unit_path" <<UNIT
+[Unit]
+Description=Tines Self Hosted
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=$INSTALL_DIR/current
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable tines.service
+  log_pass "Installed systemd service: tines.service"
 }
 
 run_preflight() {
@@ -536,194 +603,21 @@ run_preflight() {
   validate_bundle_path
 }
 
-ensure_runtime_dependencies() {
-  if $DRY_RUN; then
-    return
-  fi
-
-  if command -v docker >/dev/null 2>&1; then
-    return
-  fi
-
-  if $SKIP_DOCKER_INSTALL; then
-    die "Docker missing and --skip-docker-install was provided"
-  fi
-
-  log_info "Installing Docker packages"
-  apt-get update -y
-  apt-get install -y docker.io docker-compose-plugin
-  systemctl enable --now docker
-
-  detect_compose_command || die "Compose command not available after Docker install"
-}
-
-prepare_release_dir() {
-  local release_id release_dir
-  release_id="$(date +%Y%m%d%H%M%S)"
-  release_dir="$INSTALL_DIR/releases/$release_id"
-
-  if [[ -e "$release_dir" ]]; then
-    if $FORCE; then
-      rm -rf "$release_dir"
-    else
-      die "Release directory already exists: $release_dir (use --force to overwrite)"
-    fi
-  fi
-  mkdir -p "$release_dir"
-  printf '%s' "$release_dir"
-}
-
-extract_bundle_to_release() {
-  local target="$1"
-  local tmp
-  tmp="$(mktemp -d)"
-
-  cleanup_tmp() { rm -rf "$tmp"; }
-  trap cleanup_tmp RETURN
-
-  if [[ -d "$BUNDLE_PATH" ]]; then
-    cp -a "$BUNDLE_PATH"/. "$tmp"/
-  elif [[ "$BUNDLE_PATH" == *.zip ]]; then
-    unzip -q "$BUNDLE_PATH" -d "$tmp"
-  elif [[ "$BUNDLE_PATH" == *.tar.gz || "$BUNDLE_PATH" == *.tgz ]]; then
-    tar -xzf "$BUNDLE_PATH" -C "$tmp"
-  else
-    die "Unsupported bundle format: $BUNDLE_PATH"
-  fi
-
-  local root="$tmp"
-  if [[ ! -f "$root/setup.sh" ]]; then
-    local detected
-    detected=$(find "$tmp" -mindepth 1 -maxdepth 2 -type f -name setup.sh | head -n1 || true)
-    [[ -n "$detected" ]] || die "Unable to locate setup.sh after extraction"
-    root="$(dirname "$detected")"
-  fi
-
-  local required=(setup.sh upgrade.sh .env.tmpl docker-compose.yml)
-  local r
-  for r in "${required[@]}"; do
-    [[ -f "$root/$r" ]] || die "Missing $r in extracted bundle root"
-  done
-
-  cp -a "$root"/. "$target"/
-}
-
-set_env_key() {
-  local file="$1" key="$2" value="$3"
-  local escaped_value
-  escaped_value=$(printf '%s' "$value" | sed 's/[\\&]/\\&/g')
-  if grep -qE "^${key}=" "$file"; then
-    sed -i "s|^${key}=.*|${key}=${escaped_value}|" "$file"
-  else
-    log_warn "Key $key not found in .env.tmpl; leaving vendor defaults unchanged"
-  fi
-}
-
-render_env_file() {
-  local release_dir="$1"
-  local env_file="$release_dir/.env"
-  cp "$release_dir/.env.tmpl" "$env_file"
-
-  local mapping cfg_key env_key value
-  for mapping in "${ENV_MAP[@]}"; do
-    cfg_key="${mapping%%:*}"
-    env_key="${mapping##*:}"
-    value="${!cfg_key:-}"
-    [[ -n "$value" ]] || continue
-    set_env_key "$env_file" "$env_key" "$value"
-  done
-
-  cp "$env_file" "$INSTALL_DIR/shared/.env"
-}
-
-stage_tls_files() {
-  local release_dir="$1"
-  local cert_dir="$INSTALL_DIR/shared/certs"
-  mkdir -p "$cert_dir"
-
-  case "$TLS_MODE" in
-    self-signed)
-      openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$cert_dir/tines.key" \
-        -out "$cert_dir/tines.crt" \
-        -subj "/CN=$DOMAIN" >/dev/null 2>&1
-      log_pass "Generated self-signed TLS certificates"
-      ;;
-    provided)
-      cp "$TLS_CERT_PATH" "$cert_dir/tines.crt"
-      cp "$TLS_KEY_PATH" "$cert_dir/tines.key"
-      log_pass "Copied provided TLS certificates"
-      ;;
-    none)
-      log_warn "TLS staging skipped"
-      return
-      ;;
-  esac
-
-  cp "$cert_dir/tines.crt" "$release_dir/tines.crt"
-  cp "$cert_dir/tines.key" "$release_dir/tines.key"
-  log_pass "TLS files staged in release directory for setup.sh"
-}
-
-has_existing_install() {
-  [[ -L "$INSTALL_DIR/current" ]] && [[ -f "$INSTALL_DIR/shared/.env" ]] && [[ -f "$INSTALL_DIR/current/upgrade.sh" ]]
-}
-
-run_tines_script() {
-  local release_dir="$1"
-  local mode="$2"
-  if [[ "$mode" == "upgrade" ]]; then
-    log_info "Running official upgrade.sh"
-    (cd "$release_dir" && bash ./upgrade.sh)
-  else
-    log_info "Running official setup.sh"
-    (cd "$release_dir" && bash ./setup.sh)
-  fi
-}
-
-install_systemd_unit() {
-  local unit_path="/etc/systemd/system/tines.service"
-  cat > "$unit_path" <<UNIT
-[Unit]
-Description=Tines Self Hosted
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=$INSTALL_DIR/current
-ExecStart=/bin/bash -lc '$COMPOSE_CMD_STR up -d'
-ExecStop=/bin/bash -lc '$COMPOSE_CMD_STR down'
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-  systemctl daemon-reload
-  systemctl enable tines.service
-  log_pass "Installed and enabled tines.service"
-}
-
-start_services() {
-  local release_dir="$1"
-  (cd "$release_dir" && eval "$COMPOSE_CMD_STR up -d")
-  log_pass "Services started with $COMPOSE_CMD_STR"
-}
-
 main() {
   parse_args "$@"
 
   if $INIT_CONFIG; then
-    write_example_config "tines.conf.example"
+    init_sample_config "tines.conf.example"
     exit 0
   fi
 
-  [[ -n "$CONFIG_FILE" ]] && load_config_file "$CONFIG_FILE"
+  if [[ -n "$CONFIG_FILE" ]]; then
+    load_config "$CONFIG_FILE"
+  fi
 
   if ! $NON_INTERACTIVE && ! $GUIDED && [[ -z "$CONFIG_FILE" ]]; then
-    show_menu
-    [[ -n "$CONFIG_FILE" ]] && load_config_file "$CONFIG_FILE"
+    menu_prompt
+    [[ -n "$CONFIG_FILE" ]] && load_config "$CONFIG_FILE"
   fi
 
   $GUIDED && guided_setup
@@ -737,48 +631,48 @@ main() {
   fi
 
   run_preflight
-  log_info "Preflight summary: warnings=$WARN_COUNT failures=$FAIL_COUNT"
-  (( FAIL_COUNT == 0 )) || die "Preflight failed"
+
+  if (( FAIL_COUNT > 0 )); then
+    die "Preflight failed with $FAIL_COUNT error(s)"
+  fi
 
   if $DRY_RUN; then
-    log_pass "Dry-run complete"
+    log_pass "Dry-run complete: $WARN_COUNT warning(s), $FAIL_COUNT failure(s)"
     exit 0
   fi
 
-  ensure_runtime_dependencies
-  detect_compose_command || die "Compose command is required"
+  ensure_dependencies_installed
 
-  mkdir -p "$INSTALL_DIR/releases" "$INSTALL_DIR/shared/backups" "$INSTALL_DIR/shared/certs"
-
-  local prior_install mode release_dir
-  if has_existing_install; then
-    prior_install=true
-    mode="upgrade"
-  else
-    prior_install=false
-    mode="install"
+  mkdir -p "$INSTALL_DIR/releases" "$INSTALL_DIR/shared/certs" "$INSTALL_DIR/shared/backups"
+  local extracted bundle_dir release_dir
+  extracted=$(resolve_bundle "$BUNDLE_PATH")
+  bundle_dir=$(bundle_root_dir "$extracted")
+  validate_bundle_contents "$bundle_dir"
+  if (( FAIL_COUNT > 0 )); then
+    die "Bundle validation failed"
   fi
 
-  release_dir="$(prepare_release_dir)"
-  if ! extract_bundle_to_release "$release_dir"; then
-    rm -rf "$release_dir"
-    die "Bundle extraction failed"
-  fi
+  release_dir="$bundle_dir"
+  ln -sfn "$release_dir" "$INSTALL_DIR/current"
+
+  cp "$bundle_dir/.env.tmpl" "$INSTALL_DIR/shared/.env"
 
   if [[ -z "$APP_SECRET_TOKEN" ]]; then
     APP_SECRET_TOKEN="$(openssl rand -hex 64)"
     log_info "Generated APP_SECRET_TOKEN"
   fi
 
-  render_env_file "$release_dir"
-  stage_tls_files "$release_dir"
+  map_config_to_env "$INSTALL_DIR/shared/.env"
+  setup_tls "$INSTALL_DIR/shared/certs"
 
-  ln -sfn "$release_dir" "$INSTALL_DIR/current"
+  cp "$INSTALL_DIR/shared/.env" "$INSTALL_DIR/current/.env"
 
-  if [[ "$mode" == "upgrade" && "$prior_install" == true ]]; then
-    run_tines_script "$release_dir" "upgrade"
+  if [[ -L "$INSTALL_DIR/current" && -f "$INSTALL_DIR/current/upgrade.sh" && -d "$INSTALL_DIR/releases" && $(find "$INSTALL_DIR/releases" -mindepth 1 -maxdepth 1 -type d | wc -l) -gt 1 ]]; then
+    log_info "Existing installation detected; running official upgrade.sh"
+    (cd "$INSTALL_DIR/current" && bash ./upgrade.sh)
   else
-    run_tines_script "$release_dir" "install"
+    log_info "Running official setup.sh"
+    (cd "$INSTALL_DIR/current" && bash ./setup.sh)
   fi
 
   if [[ "$USE_SYSTEMD" == "true" ]]; then
@@ -786,12 +680,17 @@ main() {
   fi
 
   if [[ "$AUTO_START" == "true" ]]; then
-    start_services "$release_dir"
+    (cd "$INSTALL_DIR/current" && docker compose up -d)
+    log_pass "Tines services started"
   fi
 
-  log_pass "Installation flow complete"
-  log_info "Current release: $(readlink -f "$INSTALL_DIR/current")"
-  log_info "Managed env: $INSTALL_DIR/shared/.env"
+  cat <<NEXT
+[PASS] Installation flow complete.
+[INFO] Install directory: $INSTALL_DIR
+[INFO] Current release: $(readlink -f "$INSTALL_DIR/current")
+[INFO] Shared env: $INSTALL_DIR/shared/.env
+[INFO] Shared certs: $INSTALL_DIR/shared/certs
+NEXT
 }
 
 main "$@"

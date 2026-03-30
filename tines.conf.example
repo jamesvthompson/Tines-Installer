@@ -1,5 +1,4 @@
 INSTALL_DIR="/opt/tines"
-BUNDLE_PATH="/path/to/tines-bundle.zip"
 
 TENANT_NAME="my-tines"
 DOMAIN="tines.local"
@@ -9,11 +8,11 @@ SEED_FIRST_NAME="Admin"
 SEED_LAST_NAME="User"
 SEED_PASSWORD="ChangeMe123!"
 
-SMTP_SERVER="smtp.example.com"
+SMTP_SERVER="smtp.gmail.com"
 SMTP_PORT="587"
-SMTP_DOMAIN="example.com"
-SMTP_USERNAME="smtp-user"
-SMTP_PASSWORD="smtp-password"
+SMTP_DOMAIN="gmail.com"
+SMTP_USERNAME="admin@example.com"
+SMTP_PASSWORD="app-password"
 EMAIL_FROM_ADDRESS="admin@example.com"
 
 DATABASE_PASSWORD="TinesDbPass123"

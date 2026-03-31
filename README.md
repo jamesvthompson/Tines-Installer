@@ -63,6 +63,8 @@ Running `./tines-bootstrap.sh` with no flags opens a menu:
 3. Generate sample config and exit
 4. Exit
 
+> No-flags mode requires an interactive terminal (TTY). In non-interactive environments, use `--config` with optional `--non-interactive`.
+
 After guided answers or config loading, the script asks whether to run a dry-run preflight first:
 - If dry-run passes, you can choose to continue to install or exit.
 - If dry-run fails, install does not continue.

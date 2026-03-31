@@ -89,14 +89,69 @@ This bootstrap follows the documented Tines Docker Compose model:
 
 In other words, the install directory used by `setup.sh` must contain the official bundle files plus `.env` and TLS files. This bootstrap stages those items accordingly.
 
-## Quick start (expert/direct flags)
+## Quick start
+
+### 1. Download the official Tines bundle
+
+From your Tines tenant:
+
+- Go to `/settings/upgrade`
+- Download the self-hosted package (`tines_<build_id>.zip`)
+- Note: the download link is valid for ~3 minutes
+
+Place the bundle on your target server.
+
+---
+
+### 2. Download the bootstrap script
 
 ```bash
-chmod +x ./tines-bootstrap.sh
+wget https://raw.githubusercontent.com/jamesvthompson/Tines-Installer/main/tines-bootstrap.sh
+chmod +x tines-bootstrap.sh
+```
+
+Or with curl:
+
+```bash
+curl -O https://raw.githubusercontent.com/jamesvthompson/Tines-Installer/main/tines-bootstrap.sh
+chmod +x tines-bootstrap.sh
+```
+
+### 3. Run the bootstrap
+
+Interactive (recommended):
+
+```bash
+./tines-bootstrap.sh
+```
+
+You will be prompted for:
+
+- bundle path
+- tenant/domain
+- SMTP settings
+- TLS mode
+
+### 4. Optional: use a config file
+
+```bash
 cp ./tines.conf.example ./tines.conf
-# edit ./tines.conf
+# edit values
+
 ./tines-bootstrap.sh --config ./tines.conf
 ```
+
+### 5. Optional: dry-run first
+
+```bash
+./tines-bootstrap.sh --config ./tines.conf --dry-run
+```
+
+Notes:
+
+- The bootstrap stages the bundle and runs `bash setup.sh` (official Tines installer)
+- This does not replace Tines documentation or support processes
+- Always follow Tines guidance for upgrades
 
 ## Default no-flags flow
 

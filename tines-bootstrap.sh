@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 DRY_RUN=false
+EXPLICIT_DRY_RUN=false
 GUIDED=false
 NON_INTERACTIVE=false
 INIT_CONFIG=false
@@ -89,7 +90,7 @@ parse_args() {
         CONFIG_PATH="${2:-}"; shift
         ;;
       --init-config) INIT_CONFIG=true ;;
-      --dry-run) DRY_RUN=true ;;
+      --dry-run) DRY_RUN=true; EXPLICIT_DRY_RUN=true ;;
       --non-interactive) NON_INTERACTIVE=true ;;
       --install-dir)
         [[ $# -ge 2 ]] || { fail "--install-dir requires a path"; exit 1; }
@@ -114,17 +115,17 @@ parse_args() {
 show_menu() {
   echo
   echo "No flags provided. Choose an option:"
-  echo "1) Use existing config file"
-  echo "2) Guided setup"
+  echo "1) Guided setup"
+  echo "2) Use config file"
   echo "3) Generate sample config and exit"
-  echo "4) Dry-run validation only"
+  echo "4) Exit"
   read -r -p "Enter choice [1-4]: " choice
   case "$choice" in
     1)
-      read -r -p "Config path: " CONFIG_PATH
+      GUIDED=true
       ;;
     2)
-      GUIDED=true
+      read -r -p "Config path: " CONFIG_PATH
       ;;
     3)
       write_sample_config "./tines.conf.example"
@@ -132,11 +133,24 @@ show_menu() {
       exit 0
       ;;
     4)
-      DRY_RUN=true
-      read -r -p "Config path: " CONFIG_PATH
+      log "Exiting."
+      exit 0
       ;;
     *) fail "Invalid selection"; exit 1 ;;
   esac
+}
+
+prompt_yes_no() {
+  local prompt="$1"
+  local answer
+  while true; do
+    read -r -p "$prompt [y/N]: " answer
+    case "${answer,,}" in
+      y|yes) return 0 ;;
+      n|no|"") return 1 ;;
+      *) echo "Please answer y or n." ;;
+    esac
+  done
 }
 
 load_config_file() {
@@ -209,10 +223,11 @@ check_os() {
 }
 
 check_resources() {
-  local mem_mb cpu_cores disk_gb
+  local mem_mb cpu_cores disk_kb disk_gb
   mem_mb=$(awk '/MemTotal/ { print int($2/1024) }' /proc/meminfo)
   cpu_cores=$(nproc)
-  disk_gb=$(df -P / | awk 'NR==2 {print int($4/1024/1024)}')
+  disk_kb=$(LC_ALL=C df -Pk / | awk 'NR==2 {gsub(/[^0-9]/, "", $4); print $4}')
+  disk_gb=0
 
   if (( mem_mb < 4096 )); then record_fail "RAM < 4GB (${mem_mb}MB)";
   elif (( mem_mb < 8192 )); then record_warn "RAM 4-8GB (${mem_mb}MB)";
@@ -223,9 +238,14 @@ check_resources() {
   elif (( cpu_cores < 4 )); then record_warn "CPU cores < 4 (${cpu_cores})";
   else record_pass "CPU cores >= 4 (${cpu_cores})"; fi
 
-  if (( disk_gb < 20 )); then record_fail "Disk free < 20GB (${disk_gb}GB)";
-  elif (( disk_gb < 50 )); then record_warn "Disk free 20-50GB (${disk_gb}GB)";
-  else record_pass "Disk free >= 50GB (${disk_gb}GB)"; fi
+  if [[ -z "$disk_kb" ]]; then
+    record_fail "Disk free could not be determined from df output"
+  else
+    disk_gb=$((disk_kb / 1024 / 1024))
+    if (( disk_gb < 20 )); then record_fail "Disk free < 20GB (${disk_gb}GB)";
+    elif (( disk_gb < 50 )); then record_warn "Disk free 20-50GB (${disk_gb}GB)";
+    else record_pass "Disk free >= 50GB (${disk_gb}GB)"; fi
+  fi
 }
 
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -521,6 +541,9 @@ validate_non_interactive_requirements() {
 }
 
 main() {
+  local original_argc="$#"
+  local menu_mode=false
+  local dry_run_first=false
   parse_args "$@"
 
   if [[ "$INIT_CONFIG" == true ]]; then
@@ -529,7 +552,8 @@ main() {
     exit 0
   fi
 
-  if [[ $# -eq 0 && "$NON_INTERACTIVE" == false && "$GUIDED" == false && -z "$CONFIG_PATH" ]]; then
+  if [[ "$original_argc" -eq 0 && "$NON_INTERACTIVE" == false && "$GUIDED" == false && -z "$CONFIG_PATH" ]]; then
+    menu_mode=true
     show_menu
   fi
 
@@ -550,6 +574,13 @@ main() {
     validate_non_interactive_requirements
   fi
 
+  if [[ "$menu_mode" == true ]]; then
+    if prompt_yes_no "Run a dry-run preflight first?"; then
+      DRY_RUN=true
+      dry_run_first=true
+    fi
+  fi
+
   check_os
   check_resources
   check_tools
@@ -564,8 +595,17 @@ main() {
   fi
 
   if [[ "$DRY_RUN" == true ]]; then
-    log "Dry-run complete. No files were written and setup.sh was not run."
-    exit 0
+    if [[ "$dry_run_first" == true && "$EXPLICIT_DRY_RUN" == false ]]; then
+      if prompt_yes_no "Dry-run passed. Continue with install now?"; then
+        DRY_RUN=false
+      else
+        log "Dry-run complete. Exiting without install."
+        exit 0
+      fi
+    else
+      log "Dry-run complete. No files were written and setup.sh was not run."
+      exit 0
+    fi
   fi
 
   install_prerequisites

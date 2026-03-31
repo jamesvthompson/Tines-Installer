@@ -421,6 +421,28 @@ install_prerequisites() {
   fi
 }
 
+verify_required_tools() {
+  local missing_after_install=() tool
+  for tool in curl unzip openssl nc docker; do
+    if ! has_cmd "$tool"; then
+      missing_after_install+=("$tool")
+    fi
+  done
+
+  if has_cmd docker && docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+  elif has_cmd docker-compose; then
+    COMPOSE_CMD="docker-compose"
+  else
+    missing_after_install+=("compose")
+  fi
+
+  if [[ ${#missing_after_install[@]} -gt 0 ]]; then
+    fail "Required tools are still missing after installation checks: ${missing_after_install[*]}"
+    exit 1
+  fi
+}
+
 stage_bundle() {
   local src="$1" dest="$2" tmpdir root
   mkdir -p "$dest"
@@ -448,9 +470,9 @@ escape_sed_replacement() {
 
 set_env_key() {
   local env_file="$1" key="$2" value="$3" escaped
-  if grep -Eq "^${key}=(\".*\"|.*)$" "$env_file"; then
+  if grep -Eq "^${key}=(\"[^\"]*\"|[^\"]*)$" "$env_file"; then
     escaped=$(escape_sed_replacement "$value")
-    sed -i -E "s|^${key}=(\".*\"|.*)$|${key}=\"${escaped}\"|" "$env_file"
+    sed -i -E "s#^${key}=(\"[^\"]*\"|[^\"]*)\$#${key}=\"${escaped}\"#" "$env_file"
   else
     warn "Skipping env key not found in template: $key"
   fi
@@ -553,6 +575,10 @@ main() {
   fi
 
   if [[ "$original_argc" -eq 0 && "$NON_INTERACTIVE" == false && "$GUIDED" == false && -z "$CONFIG_PATH" ]]; then
+    if [[ ! -t 0 ]]; then
+      fail "Interactive mode requires a TTY. Use --config or --non-interactive."
+      exit 1
+    fi
     menu_mode=true
     show_menu
   fi
@@ -609,6 +635,7 @@ main() {
   fi
 
   install_prerequisites
+  verify_required_tools
 
   local install_dir="${CFG[INSTALL_DIR]}"
   log "Creating install directory: $install_dir"

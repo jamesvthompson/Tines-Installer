@@ -45,7 +45,7 @@ This project **does not replace** the official Tines install process. It is a th
 - The bootstrap installs missing `curl`, `unzip`, `openssl`, `netcat`, `docker` (unless `--skip-docker-install`), and the Docker Compose plugin (`docker-compose-plugin`) when compose is missing.
 - If Docker or Compose installation fails, follow the official Docker installation guide: https://docs.docker.com/compose/install/linux/
 
-## Quick start
+## Quick start (expert/direct flags)
 
 ```bash
 chmod +x ./tines-bootstrap.sh
@@ -53,6 +53,20 @@ cp ./tines.conf.example ./tines.conf
 # edit ./tines.conf
 ./tines-bootstrap.sh --config ./tines.conf
 ```
+
+## Default no-flags flow
+
+Running `./tines-bootstrap.sh` with no flags opens a menu:
+
+1. Guided setup
+2. Use config file
+3. Generate sample config and exit
+4. Exit
+
+After guided answers or config loading, the script asks whether to run a dry-run preflight first:
+- If dry-run passes, you can choose to continue to install or exit.
+- If dry-run fails, install does not continue.
+- If you skip dry-run, install proceeds directly.
 
 ## Config file example
 
@@ -93,14 +107,30 @@ TLS_KEY_PATH=""
 ```
 
 Dry-run performs preflight validation only. It does **not** install packages, write files, permanently extract bundles, or run `setup.sh`.
+When `--dry-run` is explicitly passed, it always exits after validation.
 
-## Guided usage
+## Guided usage (expert/direct flag)
 
 ```bash
 ./tines-bootstrap.sh --guided
 ```
 
-If no flags are provided, the script displays a simple menu for config, guided mode, sample config generation, or dry-run.
+No-flags behavior is menu-driven (see **Default no-flags flow** above).
+
+## Flags (expert/direct use)
+
+These flags are kept for direct usage and automation:
+
+- `--guided`
+- `--config <path>`
+- `--init-config`
+- `--dry-run`
+- `--non-interactive`
+- `--install-dir <path>`
+- `--bundle <path>`
+- `--skip-docker-install`
+- `--save-config <path>`
+- `--help`
 
 ## Non-interactive usage
 

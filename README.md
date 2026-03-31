@@ -4,104 +4,82 @@ A simple Bash bootstrap for one-time preparation of a Linux host before running 
 
 ## Why this exists
 
-Tines self-hosted environments are typically installed once and then managed using Tines-provided tooling and guidance. This project saves time by automating host prerequisites, configuration validation, and required file staging to reduce manual setup mistakes.
-
-This project **does not replace** the official Tines install process. It is a thin wrapper around the official bundle and runs `bash setup.sh` from that bundle.
+Tines self-hosted environments are typically installed once and then managed using Tines-provided tooling and guidance. This project automates host prerequisites, configuration validation, and required file staging to reduce manual setup mistakes.
 
 ## Before you run this
 
-This bootstrap is a thin wrapper around the official Tines self-hosted installation bundle. It does not replace the documented Tines installation process.
+This bootstrap is a helper around the official Tines self-hosted installation process, not a replacement.
 
 Before using this repo:
 
 1. Contact Tines first  
-   Self-hosted customers should work with their Tines Account Executive or Customer Success Manager first. Tines will connect you with the right technical resources for installation guidance, access to images, and self-hosted support.
+   Self-hosted customers should work with their Tines Account Executive (AE) or Customer Success Manager (CSM). Tines will connect you with the right technical resources for installation guidance, access to images, and self-hosted support.
 
-2. Confirm access to the official self-hosted package  
-   Tines Support enables access to the installation package for your tenant. Once enabled, the package URL is available from `/settings/upgrade` in your Tines cloud tenant. The download URL is valid for 3 minutes, and the package is named similar to `tines_<build id>.zip`.
-
-3. Gather the required deployment information  
-   Before running the bootstrap, have these values ready:
+2. Gather required deployment information  
+   Have these values ready before you run the bootstrap:
    - tenant name
    - domain / FQDN
    - seed user details
    - SMTP settings
    - TLS certificate plan
 
-4. Make sure the target host is appropriate  
-   This bootstrap is intended for Ubuntu 24.04 and assumes sudo/root access for package installation and writing the install directory.
-
-5. Review the official Tines docs first  
+3. Review the official Tines docs  
    - Before you begin: https://www.tines.com/docs/self-hosted/before-you-begin/
    - Docker Compose installation guide: https://www.tines.com/docs/self-hosted/deploying-tines/docker-compose/tines-docker-compose-installation-guide/
    - Self-hosted tenant overview: https://explained.tines.com/en/articles/12729997-can-i-set-up-a-self-hosted-tenant
 
-## What this bootstrap automates
+## What this bootstrap does (and does not do)
 
-This bootstrap helps with the Linux-side setup around the official Tines bundle:
+This bootstrap helps with Linux-side preparation around the official Tines bundle.
 
-- validates host preflight checks with PASS / WARN / FAIL output
-- optionally installs missing prerequisites on Ubuntu 24.04
-- supports guided setup, config-file mode, and a no-flags interactive menu
-- validates the official Tines bundle format and required files
-- stages the official bundle into one install directory
-- copies `.env.tmpl` to `.env` and maps conservative known config keys
-- generates or copies `tines.crt` and `tines.key`
-- detects `docker compose` (preferred) and falls back to `docker-compose` when available
-- runs `bash setup.sh` from the install directory
+It does:
+- validate host preflight checks with PASS / WARN / FAIL output
+- install missing prerequisites on Ubuntu 24.04 (optional)
+- support guided setup, config-file mode, and a no-flags interactive menu
+- validate supported bundle formats and required files
+- stage the official bundle into one install directory
+- copy `.env.tmpl` to `.env` and map conservative known config keys
+- generate or copy `tines.crt` and `tines.key`
+- run `bash setup.sh` from the staged install directory
 
-## What you still need from Tines
-
-This repo does not provide:
-- access to self-hosted entitlement
-- access to the official bundle or Docker images
-- replacement instructions for `setup.sh` or `upgrade.sh`
-
-You still need the official Tines self-hosted resources and should follow Tines guidance for upgrades and support.
+It does not:
+- grant self-hosted entitlement, bundle access, or Docker image access
+- replace official Tines documentation or support guidance
+- reimplement or replace `setup.sh` or `upgrade.sh`
+- handle lifecycle or upgrade orchestration (use official `upgrade.sh` guidance)
 
 ## Prerequisites
 
-- Target OS: Ubuntu 24.04
-- Root/sudo access
+You need:
+- Ubuntu 24.04
+- sudo/root access
 - Official Tines self-hosted bundle (`.zip`, `.tar.gz`, `.tgz`, or extracted directory)
 - Network access recommended for package installation and external checks
 
-The bootstrap installs missing:
+The bootstrap installs if missing:
 - `curl`
 - `unzip`
 - `openssl`
 - `netcat`
 - `docker` (unless `--skip-docker-install` is used)
-- Docker Compose plugin (`docker-compose-plugin`) when compose is missing
+- Docker Compose plugin (`docker-compose-plugin`)
 
-If Docker or Compose installation fails, follow the official Docker installation guide:
-https://docs.docker.com/compose/install/linux/
+If Docker or Compose installation fails, follow: https://docs.docker.com/compose/install/linux/
 
-## Install directory model
+## Get the official Tines bundle
 
-This bootstrap follows the documented Tines Docker Compose model:
+From your Tines tenant:
+- Go to `/settings/upgrade`
+- Download the self-hosted package (named similar to `tines_<build_id>.zip`)
+- The download link is short-lived (about 3 minutes)
 
-- one install directory
-- official bundle extracted there
-- `.env` lives there
-- `tines.crt` and `tines.key` live there
-- `bash setup.sh` runs there
-
-In other words, the install directory used by `setup.sh` must contain the official bundle files plus `.env` and TLS files. This bootstrap stages those items accordingly.
+Place the bundle on your target server.
 
 ## Quick start
 
 ### 1. Download the official Tines bundle
 
-From your Tines tenant:
-
-- Go to `/settings/upgrade`
-- Download the self-hosted package (`tines_<build_id>.zip`)
-- Note: the download link is valid for ~3 minutes
-
-Place the bundle on your target server.
-
----
+Use the instructions in **Get the official Tines bundle** and place the bundle on your target server.
 
 ### 2. Download the bootstrap script
 
@@ -125,13 +103,6 @@ Interactive (recommended):
 ./tines-bootstrap.sh
 ```
 
-You will be prompted for:
-
-- bundle path
-- tenant/domain
-- SMTP settings
-- TLS mode
-
 ### 4. Optional: use a config file
 
 ```bash
@@ -146,12 +117,6 @@ cp ./tines.conf.example ./tines.conf
 ```bash
 ./tines-bootstrap.sh --config ./tines.conf --dry-run
 ```
-
-Notes:
-
-- The bootstrap stages the bundle and runs `bash setup.sh` (official Tines installer)
-- This does not replace Tines documentation or support processes
-- Always follow Tines guidance for upgrades
 
 ## Default no-flags flow
 
@@ -200,6 +165,24 @@ TLS_MODE="self-signed"
 TLS_CERT_PATH=""
 TLS_KEY_PATH=""
 ```
+
+## Config format expectations
+
+Safe config-file format:
+- flat `KEY="VALUE"` lines only
+- only double-quoted values are supported (`KEY="VALUE"`)
+- no single quotes
+- no inline comments after values
+- keys must be uppercase
+- comments allowed (lines beginning with `#`)
+- blank lines allowed
+- strict format (invalid lines fail fast)
+
+## TLS modes
+
+- `self-signed` (bootstrap generates `tines.crt` and `tines.key`)
+- `provided` (bootstrap copies `TLS_CERT_PATH` and `TLS_KEY_PATH`)
+- `none` (bootstrap warns and does not stage cert/key)
 
 ## Dry-run usage
 
@@ -257,27 +240,9 @@ Supported `BUNDLE_PATH` formats:
 - `.tar.gz`
 - `.tgz`
 
-## Config format expectations
+## Install directory model
 
-Safe config-file format:
-- flat `KEY="VALUE"` lines only
-- only double-quoted values are supported (`KEY="VALUE"`)
-- no single quotes
-- no inline comments after values
-- keys must be uppercase
-- comments allowed (lines beginning with `#`)
-- blank lines allowed
-- strict format (invalid lines fail fast)
-
-## TLS modes
-
-- `self-signed` (bootstrap generates `tines.crt` and `tines.key`)
-- `provided` (bootstrap copies `TLS_CERT_PATH` and `TLS_KEY_PATH`)
-- `none` (bootstrap warns and does not stage cert/key)
-
-## Install directory staging model (supportability)
-
-This bootstrap intentionally follows the official model:
+This bootstrap follows the documented Tines Docker Compose model:
 
 - one install directory
 - official bundle extracted there
@@ -286,13 +251,6 @@ This bootstrap intentionally follows the official model:
 - `bash setup.sh` runs there
 
 In other words, the install directory used by `setup.sh` must contain the official bundle files plus `.env` and TLS files. This bootstrap stages those items accordingly.
-
-## Notes about supportability
-
-- This script does **not** reimplement or replace `setup.sh` or `upgrade.sh`.
-- This script does **not** implement lifecycle/upgrade orchestration.
-- Upgrades should follow official Tines documentation and the official `upgrade.sh` flow.
-- A systemd unit is optional operational preference and not part of this bootstrap.
 
 ## License
 

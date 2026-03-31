@@ -223,11 +223,10 @@ check_os() {
 }
 
 check_resources() {
-  local mem_mb cpu_cores disk_kb disk_gb
+  local mem_mb cpu_cores disk_gb
   mem_mb=$(awk '/MemTotal/ { print int($2/1024) }' /proc/meminfo)
   cpu_cores=$(nproc)
-  disk_kb=$(LC_ALL=C df -Pk / | awk 'NR==2 {gsub(/[^0-9]/, "", $4); print $4}')
-  disk_gb=0
+  disk_gb=$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')
 
   if (( mem_mb < 4096 )); then record_fail "RAM < 4GB (${mem_mb}MB)";
   elif (( mem_mb < 8192 )); then record_warn "RAM 4-8GB (${mem_mb}MB)";
@@ -238,13 +237,16 @@ check_resources() {
   elif (( cpu_cores < 4 )); then record_warn "CPU cores < 4 (${cpu_cores})";
   else record_pass "CPU cores >= 4 (${cpu_cores})"; fi
 
-  if [[ -z "$disk_kb" ]]; then
-    record_fail "Disk free could not be determined from df output"
+  if [[ ! "$disk_gb" =~ ^[0-9]+$ ]]; then
+    record_fail "Disk free could not be determined"
+  elif (( disk_gb > 100000 )); then
+    record_warn "Disk free reported an unrealistic value (${disk_gb}GB); skipping strict disk validation"
+  elif (( disk_gb < 20 )); then
+    record_fail "Disk free < 20GB (${disk_gb}GB)"
+  elif (( disk_gb < 50 )); then
+    record_warn "Disk free 20-50GB (${disk_gb}GB)"
   else
-    disk_gb=$((disk_kb / 1024 / 1024))
-    if (( disk_gb < 20 )); then record_fail "Disk free < 20GB (${disk_gb}GB)";
-    elif (( disk_gb < 50 )); then record_warn "Disk free 20-50GB (${disk_gb}GB)";
-    else record_pass "Disk free >= 50GB (${disk_gb}GB)"; fi
+    record_pass "Disk free >= 50GB (${disk_gb}GB)"
   fi
 }
 
